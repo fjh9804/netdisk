@@ -1,81 +1,64 @@
 #include "client.h"
 
-int main(void)
-{
+//定义记录当前子线程数的全局变量
+static int pid_count = 0;
 
-    char ip[128] = {0};
-    getparameter("ip", ip);
-    printf("%s\n", ip);
-    char port[32] = {0};
-    getparameter("port", port);
-    printf("%s\n", port);
+struct info_pack{
+    //token用于登录验证
+    char *token;
+    //区分上传还是下载
+    int cmd_type;
+    //文件路径
+    char *file_path;
+};
 
+//子线程入口函数
+void *thread_main(void *p){
+    //指针类型转换
+    struct info_pack *pack = (struct info_pack *)p;
+    printf("结构体传入\n");
 
-    //初始化socket
-    int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-
-    //构建struct sockaddr_in类型
-    struct sockaddr_in socketaddr;
-    socketaddr.sin_family = AF_INET;
-    socketaddr.sin_addr.s_addr = inet_addr(ip);
-    socketaddr.sin_port = htons(atoi(port));
-
-    //向服务器发起连接请求
-    int res_connect = connect(socket_fd, (struct sockaddr *)&socketaddr, sizeof(socketaddr));
-    ERROR_CHECK(res_connect, -1, "connect");
+    //先进行连接
+    int thread_sock_fd;
+    tcp_init(&thread_sock_fd);
 
     //连接成功，进行用户名密码校验
-    printf("请输入用户名\n");
-    char name[60] = {0};
-    char password[1024] = {0};
-    char password_check[1024] = {0};
-    scanf("%s", name);
-    //发送用户名长度
-    int name_len = strlen(name);
-    int res_sd_namelen = send(socket_fd, &name_len, sizeof(int), 0);
-    ERROR_CHECK(res_sd_namelen, -1, "send name_len");
-    //发送用户名
-    int res_sd_name = send(socket_fd, name, strlen(name), 0);
-    ERROR_CHECK(res_sd_name, -1, "send name");
+    log_in(pack->token, thread_sock_fd);
 
-    int check_result = 0;
-
-    while(1){
-        printf("请输入密码:\n");
-        scanf("%s", password);
-        while(check_result == -1){
-            printf("请再次输入密码\n");
-            scanf("%s", password_check);
-
-            if(strcmp(password, password_check) == 0){
-                //设置密码成功
-                break;
-            }
-        }
-        //发送密码长度
-        int pwd_len = strlen(password);
-        int res_sd_pwdlen = send(socket_fd, &pwd_len, sizeof(int), 0);
-        ERROR_CHECK(res_sd_pwdlen, -1, "send pwd_len");
-        //发送密码
-        int res_sd_pwd = send(socket_fd, password, strlen(password), 0);
-        ERROR_CHECK(res_sd_pwd, -1, "send password");
-
-        //接收密码校验结果
-        int res_sd_check = recv(socket_fd, &check_result, sizeof(int), 0);
-        ERROR_CHECK(res_sd_check, -1, "recv check_result");
-        if(check_result == 1){
-            printf("密码错误!\n");
-            continue;
-        }else if(check_result == 0){
-            printf("密码正确!\n");
-            break;
-        }
-        check_result = -1;
-        printf("用户名未注册！\n");
-        printf("账户初始化:\n");
-        continue;
+    //进行上传或下载
+    switch(pack->cmd_type){
+    case 0:
+        upload_file(pack->file_path, thread_sock_fd);
+        pack->file_path = NULL;
+        pid_count--;
+        break;
+    case 1:
+        download_file(pack->file_path, thread_sock_fd);
+        pack->file_path = NULL;
+        pid_count--;
+        break;
+    default :
+        printf("Incorrect cmd into thread!\n");
     }
+    pthread_exit(NULL);
+}
 
+
+int main(void)
+{
+    //初始化socket
+    int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    tcp_init(&socket_fd);
+
+    //连接成功，进行用户名密码校验
+    
+    //定义字符数组token用于接收正确token
+    char token[2048] = {0};
+    log_in(token, socket_fd);
+
+    //创建struct info_pack结构体
+    struct info_pack *pack = (struct info_pack *)calloc(1, sizeof(struct info_pack));
+    pack->token = token;
 
     while(1){
         //获取标准输入
@@ -91,10 +74,9 @@ int main(void)
         buf[res_read - 1] = 0;
         //如果用户选择退出
         if(strcmp(buf, "exit") == 0){
-            printf("已退出网盘\n");
             break;
         }
-        printf("-------------------------------------\n");
+        printf("\n--------------------------------------------------------------------------\n");
         //切割命令
         struct cmd_arg *Cmd = (struct cmd_arg*)calloc(1, sizeof(struct cmd_arg));
         cmd_tok(Cmd, buf);
@@ -103,76 +85,126 @@ int main(void)
         //创建用于接收服务器回复消息的字符数组
         char msg[4096] = {0};
         memset(msg, 0, sizeof(msg));
+        
         //根据具体命令，进行对应操作
         int flag = 0;
         if(strcmp(Cmd->cmd, "cd") == 0){
 
             int cmd_type = 0;
+            
             int res0 = send(socket_fd, &cmd_type, sizeof(int), 0);
             ERROR_CHECK(res0, -1, "send cmd_type");
+            
             int res1 = send(socket_fd, Cmd->path, sizeof(Cmd->path), 0);
             ERROR_CHECK(res1, -1, "send path");
-            //recv_msg(msg, socket_fd);
+            
             recv(socket_fd, msg, sizeof(msg), 0);
             printf("%s\n", msg);
+
         }else if(strcmp(Cmd->cmd, "ls") == 0){
 
             int cmd_type = 1;
+            
             int res0 = send(socket_fd, &cmd_type, sizeof(int), 0);
             ERROR_CHECK(res0, -1, "send cmd_type");
+            
             int res1 = send(socket_fd, Cmd->path, sizeof(Cmd->path), 0);
             ERROR_CHECK(res1, -1, "send path");
-            //crecv_msg(msg, socket_fd);
+            
             recv(socket_fd, msg, sizeof(msg), 0);
             printf("current content:%s\n", msg);
+
         }else if(strcmp(Cmd->cmd, "upload") == 0){
+            
+            //修改pack结构体信息
+            pack->cmd_type = 0;
+            pack->file_path = Cmd->cmd;
 
-            upload_file(Cmd->path, socket_fd);
+            //创建子线程
+            pthread_t *pthread_id = (pthread_t *)calloc(1, sizeof(pthread_t));
+            pthread_create(pthread_id, NULL, thread_main, pack);
+            pid_count++;
+
         }else if(strcmp(Cmd->cmd, "download") == 0){
+            
+            //修改pack结构体信息
+            pack->cmd_type = 1;
+            pack->file_path = Cmd->cmd;
 
-            download_file(Cmd->path, socket_fd);
+            //创建子线程
+            pthread_t *pthread_id = (pthread_t *)calloc(1, sizeof(pthread_t));
+            pthread_create(pthread_id, NULL, thread_main, pack);
+            pid_count++;
+
         }else if(strcmp(Cmd->cmd, "rm") == 0){
 
             int cmd_type = 4;
+            
             int res0 = send(socket_fd, &cmd_type, sizeof(int), 0);
             ERROR_CHECK(res0, -1, "send cmd_type");
+            
             int res1 = send(socket_fd, Cmd->path, sizeof(Cmd->path), 0);
             ERROR_CHECK(res1, -1, "send path");
-            //recv_msg(msg, socket_fd);
+            
             if((flag = recv(socket_fd, msg, sizeof(msg), 0)) != 0){
                 printf("remove succeeded!\n");
             }else{
                 printf("remove failed!");
             }
+
         }else if(strcmp(Cmd->cmd, "pwd") == 0){
 
             int cmd_type = 5;
+            
             int res0 = send(socket_fd, &cmd_type, sizeof(int), 0);
             ERROR_CHECK(res0, -1, "send cmd_type");
-            //int res1 = send(socket_fd, Cmd->path, sizeof(Cmd->path), 0);
-            //ERROR_CHECK(res1, -1, "send path");
-            //recv_msg(msg, socket_fd);
+            
             recv(socket_fd, msg, sizeof(msg), 0);
             printf("current path:%s\n", msg);
+
         }else if(strcmp(Cmd->cmd, "mkdir") == 0){
 
             int cmd_type = 6;
+            
             int res0 = send(socket_fd, &cmd_type, sizeof(int), 0);
             ERROR_CHECK(res0, -1, "send cmd_type");
+            
             int res1 = send(socket_fd, Cmd->path, sizeof(Cmd->path), 0);
             ERROR_CHECK(res1, -1, "send path");
-            //recv_msg(msg, socket_fd);
+            
             if((flag = recv(socket_fd, msg, sizeof(msg), 0)) != 0){
                 printf("mkdir succeeded!\n");
             }else{
                 printf("mkdir failed!\n");
             }
+
+        }else if(strcmp(Cmd->cmd, "logout") == 0){
+            //To Do:
+            //
+            //
+            //
+            //
+            //
+            //
         }else{
             printf("Command invalid!\n");
         }
     }
-
+    
+    //用户选择退出
     close(socket_fd);
+    
+    //等待所有子进程退出
+    if(pid_count > 0){
+        printf("当前有传输任务正在执行，是否继续退出?(y/n):");
+        char opt;
+        scanf("%c", &opt);
+        if(opt != 'y'){
+            printf("任务结束后将自动退出\n");
+            while(pid_count > 0);
+        }
+    }
+    printf("已退出网盘\n");
     return 0;
 }
 

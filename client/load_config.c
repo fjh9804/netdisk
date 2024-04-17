@@ -17,7 +17,7 @@ int getparameter(char *key, char *value){
         char *line_key = strtok(line, "=");
         if(strcmp(key, line_key) == 0){
             //找到对应键值
-            char *line_value = strtok(NULL, "\n");
+            char *line_value = strtok(NULL, "=");
             memcpy(value, line_value, strlen(line_value));
             return 0;
         }

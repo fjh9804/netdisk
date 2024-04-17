@@ -20,5 +20,8 @@ int getparameter(char *key, char *value);
 //计算文件哈希值
 int get_file_hash(const char *filename, char *res, size_t res_size);
 //计算密码哈希值
-int get_pwd_hash(char *name, char *salt, char *hash);
-
+int get_pwd_hash(char *name, char *password, char *salt, char *hash);
+//初始化socket
+int tcp_init(int *socket_fd);
+//进行登录或注册
+int log_in(char *token, int socket_fd);
